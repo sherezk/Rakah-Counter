@@ -472,19 +472,25 @@ function classifyPose(keypoints) {
   // Torso lean: difference between shoulder and hip y
   const torsoVertical = Math.abs(shoulderRel - hipRel);
 
-  // CALIBRATED from real data (camera on floor pointing up):
-  // Standing: nose~0.11, hip~0.91, torsoVert~0.59
-  // Ruku:     nose~0.08, hip~0.35, torsoVert~0.34
-  // Sajdah:   nose~0.05, hip~0.17, torsoVert~0.14
-  // Sitting:  nose~0.66, hip~0.80, torsoVert~0.48
+  // FINAL CALIBRATION based on all collected data:
+  // Sajdah:  hip 0.17-0.23, torsoVert 0.14-0.21
+  // Ruku:    hip 0.35-0.44, torsoVert 0.35-0.40
+  // Sitting: hip 0.74-0.82, torsoVert 0.37-0.48, nose 0.60-0.74
+  // Standing:hip 0.85-0.95, torsoVert 0.49-0.59, nose 0.19-0.29
+  // Key: use hip as primary splitter, torsoVert as tiebreaker
 
   let detected = 'Standing';
-  if (hipRel < 0.25 && torsoVertical < 0.22) {
+  if (hipRel < 0.30) {
     detected = 'Sajdah';
-  } else if (hipRel < 0.52 && torsoVertical < 0.44) {
+  } else if (hipRel < 0.60) {
     detected = 'Ruku';
-  } else if (noseRel > 0.45 && hipRel > 0.62) {
-    detected = 'Sitting';
+  } else if (hipRel < 0.84) {
+    // hip 0.60-0.84: could be Sitting or partially-risen Standing
+    // use torsoVert: Sitting ~0.37-0.48, Standing ~0.49-0.59
+    detected = torsoVertical < 0.49 ? 'Sitting' : 'Standing';
+  } else {
+    // hip >= 0.84: clearly Standing
+    detected = 'Standing';
   }
 
   // DEBUG OUTPUT
