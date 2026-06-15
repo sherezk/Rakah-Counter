@@ -152,21 +152,43 @@
   /* Pose indicator — subtle dots at bottom */
   .pose-bar {
     position: fixed;
-    bottom: calc(env(safe-area-inset-bottom, 16px) + 24px);
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 16px) + 20px);
+    left: 0; right: 0;
+    padding: 0 10px;
     display: flex;
-    gap: 8px;
+    gap: 0;
+    justify-content: space-around;
+    align-items: flex-start;
+  }
+  .pose-dot-wrap {
+    display: flex;
+    flex-direction: column;
     align-items: center;
+    gap: 5px;
+    flex: 1;
   }
   .pose-dot {
-    width: 6px; height: 6px;
+    width: 12px; height: 12px;
     border-radius: 50%;
     background: rgba(255,255,255,0.15);
-    transition: background 0.3s ease;
+    transition: background 0.3s ease, transform 0.2s ease;
   }
-  .pose-dot.active { background: rgba(255,255,255,0.7); }
-  .pose-dot.done   { background: rgba(255,255,255,0.35); }
+  .pose-dot.active {
+    background: rgba(255,255,255,0.85);
+    transform: scale(1.3);
+  }
+  .pose-dot.done { background: rgba(255,255,255,0.4); }
+  .pose-dot-label {
+    font-size: 8px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.2);
+    text-align: center;
+    transition: color 0.3s ease;
+    line-height: 1.2;
+  }
+  .pose-dot-wrap.active .pose-dot-label { color: rgba(255,255,255,0.8); }
+  .pose-dot-wrap.done .pose-dot-label   { color: rgba(255,255,255,0.4); }
 
   /* Stop button — tiny, top right */
   .stop-btn {
@@ -259,15 +281,15 @@
   <div id="rakah-number">1</div>
   <div class="counter-label">Rak'ah</div>
 
-  <!-- 7 pose steps: Stand · Ruku · Stand · Sajdah · Sit · Sajdah · Stand -->
+  <!-- 7 pose steps with labels -->
   <div class="pose-bar" id="pose-bar">
-    <div class="pose-dot" data-step="0"></div>
-    <div class="pose-dot" data-step="1"></div>
-    <div class="pose-dot" data-step="2"></div>
-    <div class="pose-dot" data-step="3"></div>
-    <div class="pose-dot" data-step="4"></div>
-    <div class="pose-dot" data-step="5"></div>
-    <div class="pose-dot" data-step="6"></div>
+    <div class="pose-dot-wrap" data-step="0"><div class="pose-dot"></div><div class="pose-dot-label">Stand</div></div>
+    <div class="pose-dot-wrap" data-step="1"><div class="pose-dot"></div><div class="pose-dot-label">Ruku</div></div>
+    <div class="pose-dot-wrap" data-step="2"><div class="pose-dot"></div><div class="pose-dot-label">Stand</div></div>
+    <div class="pose-dot-wrap" data-step="3"><div class="pose-dot"></div><div class="pose-dot-label">Sajdah</div></div>
+    <div class="pose-dot-wrap" data-step="4"><div class="pose-dot"></div><div class="pose-dot-label">Sit</div></div>
+    <div class="pose-dot-wrap" data-step="5"><div class="pose-dot"></div><div class="pose-dot-label">Sajdah</div></div>
+    <div class="pose-dot-wrap" data-step="6"><div class="pose-dot"></div><div class="pose-dot-label">Stand</div></div>
   </div>
 
   <button class="stop-btn" id="stop-btn">Stop</button>
@@ -313,7 +335,7 @@ const doneNumber    = document.getElementById('done-number');
 const startBtn      = document.getElementById('start-btn');
 const stopBtn       = document.getElementById('stop-btn');
 const loadingOverlay= document.getElementById('loading-overlay');
-const poseDots      = document.querySelectorAll('.pose-dot');
+const poseDots      = document.querySelectorAll('.pose-dot-wrap');
 const videoEl       = document.getElementById('camera-feed');
 
 // ════════════════════════════════════════════════════
@@ -472,32 +494,72 @@ function classifyPose(keypoints) {
   // Torso lean: difference between shoulder and hip y
   const torsoVertical = Math.abs(shoulderRel - hipRel);
 
-  // FINAL CALIBRATION based on all collected data:
-  // Sajdah:  hip 0.17-0.23, torsoVert 0.14-0.21
-  // Ruku:    hip 0.35-0.44, torsoVert 0.35-0.40
-  // Sitting: hip 0.74-0.82, torsoVert 0.37-0.48, nose 0.60-0.74
-  // Standing:hip 0.85-0.95, torsoVert 0.49-0.59, nose 0.19-0.29
-  // Key: use hip as primary splitter, torsoVert as tiebreaker
+  // VERTICAL PHONE CALIBRATION (phone leaning against couch, ~4-5ft away):
+  // Sajdah:  hip 0.17-0.30, torsoVert 0.14-0.22
+  // Ruku:    hip 0.31-0.55, shoulder ~0.00-0.13
+  // Sitting: hip 0.74-0.86, torsoVert 0.37-0.48, shoulder 0.37-0.42
+  // Standing:hip 0.85-0.95, torsoVert 0.49-0.59, shoulder 0.38-0.46
+  // Problem: image2 showed hip:0.47, shoulder:0.60 while standing = body partially out of frame
+  // Solution: if shoulder > 0.35 AND hip > 0.56, treat as Standing regardless
+
+  const shoulderRel2 = shoulderY / (videoEl.videoHeight || 480);
+  const torsoVertical = Math.abs(shoulderRel - hipRel);
+
+  // ── SEQUENCE-AWARE CLASSIFICATION ──────────────────────────────────────
+  //
+  // Key insight: shoulder position is the most reliable signal because
+  // it stays in frame even when the body is partially cut off.
+  //
+  // Measured ranges (phone vertical, leaning ~4-5ft away, front camera):
+  //   Standing: shoulder 0.31–0.60, hip 0.85–0.95, torsoVert 0.49–0.59
+  //   Ruku:     shoulder 0.00–0.13, hip 0.33–0.47, torsoVert 0.32–0.40
+  //   Sajdah:   shoulder 0.00–0.03, hip 0.17–0.23, torsoVert 0.14–0.21
+  //   Sitting:  shoulder 0.32–0.42, hip 0.74–0.86, torsoVert 0.37–0.48
+  //             nose 0.60–0.78 (distinctly high — key differentiator vs Standing)
+  //
+  // The shoulder gap between Ruku (0.00–0.13) and Standing/Sitting (0.31+)
+  // is wide and reliable. Use it as the primary splitter.
 
   let detected = 'Standing';
-  if (hipRel < 0.30) {
+
+  // 1. SAJDAH — shoulder and hip both very low
+  if (shoulderRel2 < 0.08 && hipRel < 0.28) {
     detected = 'Sajdah';
-  } else if (hipRel < 0.60) {
+  }
+
+  // 2. RUKU — shoulder very high in frame (low value), hip mid-range
+  else if (shoulderRel2 < 0.20 && hipRel >= 0.28) {
     detected = 'Ruku';
-  } else if (hipRel < 0.84) {
-    // hip 0.60-0.84: could be Sitting or partially-risen Standing
-    // use torsoVert: Sitting ~0.37-0.48, Standing ~0.49-0.59
-    detected = torsoVertical < 0.49 ? 'Sitting' : 'Standing';
-  } else {
-    // hip >= 0.84: clearly Standing
-    detected = 'Standing';
+  }
+
+  // 3. SITTING — shoulder has dropped (> 0.28), nose distinctly low in frame (> 0.55)
+  // nose > 0.55 is the clearest differentiator: Standing nose is 0.11–0.60 but
+  // the overlap is rare; we use nose > 0.55 AND shoulder > 0.28 together
+  else if (shoulderRel2 > 0.28 && noseRel > 0.55 && hipRel > 0.65) {
+    detected = 'Sitting';
+  }
+
+  // 4. STANDING — shoulder has dropped from Ruku (> 0.20), not Sitting
+  // This is the sequence-aware part: when we get here, shoulder is clearly
+  // NOT in Ruku/Sajdah range, and nose is not in Sitting range.
+  // Accept Standing even if hip is partially out of frame.
+  else if (shoulderRel2 > 0.20) {
+    // Extra check: if this is the step right after Ruku (poseStep === 1),
+    // be even more generous — just require shoulder dropped from Ruku range.
+    if (poseStep === 1 || poseStep === 5) {
+      // After Ruku or after second Sajdah: shoulder > 0.20 is enough
+      detected = 'Standing';
+    } else {
+      // General Standing: require torso has some vertical extent
+      detected = torsoVertical > 0.30 ? 'Standing' : 'Sitting';
+    }
   }
 
   // DEBUG OUTPUT
   const dbg = document.getElementById('debug-overlay');
   if (dbg) {
     dbg.textContent =
-      `nose: ${noseRel.toFixed(2)}  shoulder: ${shoulderRel.toFixed(2)}  hip: ${hipRel.toFixed(2)}\n` +
+      `nose: ${noseRel.toFixed(2)}  shoulder: ${shoulderRel2.toFixed(2)}  hip: ${hipRel.toFixed(2)}\n` +
       `knee: ${kneeRel !== null ? kneeRel.toFixed(2) : '--'}  torsoVert: ${torsoVertical.toFixed(2)}\n` +
       `DETECTED: ${detected}   |  step: ${poseStep} expects: ${SEQUENCE[poseStep]}\n` +
       `hold: ${holdCount}/${HOLD_FRAMES}`;
@@ -597,10 +659,17 @@ function updateDisplay() {
 }
 
 function updatePoseDots() {
-  poseDots.forEach((dot, i) => {
+  poseDots.forEach((wrap, i) => {
+    const dot = wrap.querySelector('.pose-dot');
+    wrap.classList.remove('active', 'done');
     dot.classList.remove('active', 'done');
-    if (i < poseStep)      dot.classList.add('done');
-    else if (i === poseStep) dot.classList.add('active');
+    if (i < poseStep) {
+      wrap.classList.add('done');
+      dot.classList.add('done');
+    } else if (i === poseStep) {
+      wrap.classList.add('active');
+      dot.classList.add('active');
+    }
   });
 }
 
